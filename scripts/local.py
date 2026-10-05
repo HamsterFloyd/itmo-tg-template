@@ -15,12 +15,15 @@ from app.config import ConfigError, Settings
 from app.db import create_pool
 from scripts.common import CommandError, private_write, run_command
 
+YANDEX_LLM_URL = "https://ai.api.cloud.yandex.net/v1"
+
 
 def prepare_env(
     root: Path,
     *,
     cloud: bool,
     ask: Callable[[str], str] = getpass.getpass,
+    prompt: Callable[[str], str] = input,
     environ: Mapping[str, str] | None = None,
 ) -> Path:
     path = root / (".env.cloud" if cloud else ".env")
@@ -35,6 +38,7 @@ def prepare_env(
         "POSTGRES_USER": "bot",
         "LOG_LEVEL": "INFO",
         "HEALTH_PORT": "8080",
+        "LLM_BASE_URL": YANDEX_LLM_URL,
     }
     for key, default in defaults.items():
         if not values.get(key):
@@ -47,6 +51,15 @@ def prepare_env(
         updates["TELEGRAM_PROXY_URL"] = ask(
             "URL HTTP/SOCKS5 прокси (ввод скрыт; локально Enter — без прокси): "
         ).strip()
+    if not values.get("LLM_API_KEY"):
+        updates["LLM_API_KEY"] = ask("API-ключ языковой модели (ввод скрыт): ").strip()
+    if not values.get("LLM_MODEL"):
+        # Для YandexGPT имя модели строится из ID каталога; другой провайдер — правкой env-файла.
+        folder = prompt("ID каталога Yandex Cloud для YandexGPT (b1g…): ").strip()
+        if not folder:
+            raise ConfigError("Укажите ID каталога Yandex Cloud или задайте LLM_MODEL в env-файле.")
+        updates["LLM_PROJECT"] = folder
+        updates["LLM_MODEL"] = f"gpt://{folder}/yandexgpt-lite/latest"
     merged = {**values, **updates}
     if cloud and not merged.get("TELEGRAM_PROXY_URL"):
         raise ConfigError("Для облака необходимо указать внешний прокси Telegram.")

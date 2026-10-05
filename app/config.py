@@ -25,6 +25,22 @@ class Settings:
     postgres_user: str = "bot"
     log_level: str = "INFO"
     health_port: int = 8080
+    llm_base_url: str = ""
+    llm_api_key: str = field(default="", repr=False)
+    llm_model: str = ""
+    llm_project: str = ""
+    llm_timeout: float = 30.0
+    llm_max_tokens: int = 1500
+    history_max_messages: int = 20
+    history_max_chars: int = 12000
+
+    @property
+    def llm_model_name(self) -> str:
+        """Имя модели для пользователя без ID каталога: gpt://b1g…/yandexgpt-lite/latest."""
+        scheme, separator, rest = self.llm_model.partition("://")
+        if not separator:
+            return self.llm_model
+        return rest.partition("/")[2] or scheme
 
     @classmethod
     def load(
@@ -46,6 +62,15 @@ class Settings:
                 return result
             except ValueError:
                 raise ConfigError(f"{key}: нужен номер порта от 1 до 65535.") from None
+
+        def number(key: str, default: str, minimum: float, maximum: float, kind: type) -> float:
+            try:
+                result = kind(value(key, default))
+                if not minimum <= result <= maximum:
+                    raise ValueError
+                return result
+            except ValueError:
+                raise ConfigError(f"{key}: нужно число от {minimum} до {maximum}.") from None
 
         token = value("BOT_TOKEN")
         try:
@@ -76,6 +101,23 @@ class Settings:
         level = value("LOG_LEVEL", "INFO").upper()
         if level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
             raise ConfigError("LOG_LEVEL: используйте DEBUG, INFO, WARNING, ERROR или CRITICAL.")
+        base_url = value("LLM_BASE_URL").rstrip("/")
+        parsed_url = urlsplit(base_url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+            raise ConfigError(
+                "LLM_BASE_URL: укажите адрес OpenAI-совместимого API, "
+                "например https://ai.api.cloud.yandex.net/v1."
+            )
+        if parsed_url.username or parsed_url.password or parsed_url.query:
+            raise ConfigError("LLM_BASE_URL: адрес не должен содержать ключ или параметры.")
+        api_key = value("LLM_API_KEY")
+        if not api_key:
+            raise ConfigError("LLM_API_KEY: ключ доступа к языковой модели не задан.")
+        model = value("LLM_MODEL")
+        if not model:
+            raise ConfigError(
+                "LLM_MODEL: укажите модель, например gpt://<ID каталога>/yandexgpt-lite/latest."
+            )
         return cls(
             bot_token=token,
             postgres_password=password,
@@ -86,4 +128,13 @@ class Settings:
             postgres_user=value("POSTGRES_USER", "bot"),
             log_level=level,
             health_port=port("HEALTH_PORT", "8080"),
+            llm_base_url=base_url,
+            llm_api_key=api_key,
+            llm_model=model,
+            llm_project=value("LLM_PROJECT"),
+            llm_timeout=number("LLM_TIMEOUT", "30", 1, 300, float),
+            llm_max_tokens=number("LLM_MAX_TOKENS", "1500", 1, 32000, int),
+            history_max_messages=number("HISTORY_MAX_MESSAGES", "20", 2, 200, int),
+            # Нижняя граница — лимит сообщения Telegram: текущий запрос всегда помещается.
+            history_max_chars=number("HISTORY_MAX_CHARS", "12000", 4096, 200000, int),
         )

@@ -7,31 +7,61 @@ from dotenv import dotenv_values
 from scripts.common import CommandError, run_command
 from scripts.local import compose_command, prepare_env
 
+TOKEN = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk"
+FOLDER = Mock(return_value="b1gfolder")
+
 
 def test_first_setup_and_repeat_preserve_secrets(tmp_path):
     # Arrange
     root = tmp_path / "Курс с пробелами"
     root.mkdir()
-    prompt = Mock(side_effect=["123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk", ""])
+    secret = Mock(side_effect=[TOKEN, "", "llm-secret-key"])
     # Act
-    path = prepare_env(root, cloud=False, ask=prompt, environ={})
+    path = prepare_env(root, cloud=False, ask=secret, prompt=FOLDER, environ={})
     first = path.read_bytes()
-    prepare_env(root, cloud=False, ask=Mock(side_effect=AssertionError), environ={})
+    prepare_env(
+        root,
+        cloud=False,
+        ask=Mock(side_effect=AssertionError),
+        prompt=Mock(side_effect=AssertionError),
+        environ={},
+    )
     # Assert
+    config = dotenv_values(path)
     assert path.read_bytes() == first
-    assert len(dotenv_values(path)["POSTGRES_PASSWORD"]) >= 24
-    assert dotenv_values(path)["POSTGRES_HOST"] == "127.0.0.1"
+    assert len(config["POSTGRES_PASSWORD"]) >= 24
+    assert config["POSTGRES_HOST"] == "127.0.0.1"
+    assert config["LLM_BASE_URL"] == "https://ai.api.cloud.yandex.net/v1"
+    assert config["LLM_API_KEY"] == "llm-secret-key"
+    assert config["LLM_MODEL"] == "gpt://b1gfolder/yandexgpt-lite/latest"
+    assert config["LLM_PROJECT"] == "b1gfolder"
+
+
+def test_empty_folder_id_fails_before_creating_file(tmp_path):
+    # Arrange / Act / Assert
+    with pytest.raises(ValueError, match="LLM_MODEL"):
+        prepare_env(
+            tmp_path,
+            cloud=False,
+            ask=Mock(side_effect=[TOKEN, "", "llm-secret-key"]),
+            prompt=Mock(return_value=""),
+            environ={},
+        )
+    assert not (tmp_path / ".env").exists()
 
 
 def test_cloud_requires_proxy_and_has_separate_password(tmp_path):
     # Arrange
-    token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk"
-    prepare_env(tmp_path, cloud=False, ask=Mock(side_effect=[token, ""]), environ={})
+    token = TOKEN
+    prepare_env(
+        tmp_path, cloud=False, ask=Mock(side_effect=[token, "", "key"]), prompt=FOLDER, environ={}
+    )
     # Act
     path = prepare_env(
         tmp_path,
         cloud=True,
-        ask=Mock(side_effect=[token, "socks5://user:p%40ss@proxy:1080"]),
+        ask=Mock(side_effect=[token, "socks5://user:p%40ss@proxy:1080", "cloud-key"]),
+        prompt=FOLDER,
         environ={},
     )
     # Assert
@@ -39,6 +69,7 @@ def test_cloud_requires_proxy_and_has_separate_password(tmp_path):
     assert config["POSTGRES_HOST"] == "db"
     assert config["POSTGRES_PASSWORD"] != dotenv_values(tmp_path / ".env")["POSTGRES_PASSWORD"]
     assert config["TELEGRAM_PROXY_URL"] == "socks5://user:p%40ss@proxy:1080"
+    assert config["LLM_API_KEY"] == "cloud-key"
 
 
 def test_cloud_empty_proxy_fails_before_creating_file(tmp_path):
@@ -47,7 +78,8 @@ def test_cloud_empty_proxy_fails_before_creating_file(tmp_path):
         prepare_env(
             tmp_path,
             cloud=True,
-            ask=Mock(side_effect=["123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk", ""]),
+            ask=Mock(side_effect=[TOKEN, "", "key"]),
+            prompt=FOLDER,
             environ={},
         )
     assert not (tmp_path / ".env.cloud").exists()
@@ -382,7 +414,8 @@ def test_setup_only_checks_real_credentials_without_starting_bot(tmp_path, monke
     prepare_env(
         tmp_path,
         cloud=False,
-        ask=Mock(side_effect=["123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk", ""]),
+        ask=Mock(side_effect=[TOKEN, "", "key"]),
+        prompt=FOLDER,
         environ={},
     )
     commands = Mock(return_value="")

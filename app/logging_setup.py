@@ -33,6 +33,7 @@ def configure_logging(settings: Settings) -> None:
                 settings.bot_token,
                 settings.postgres_password,
                 settings.telegram_proxy_url,
+                settings.llm_api_key,
                 proxy.password or "",
                 unquote(proxy.password or ""),
             ]
